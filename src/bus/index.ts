@@ -1,4 +1,4 @@
-import { EventEmitter2 } from 'eventemitter2'
+import EventEmitter2 from 'eventemitter2'
 import type { QualificationEvent } from '../types/index.js'
 
 // Singleton event bus shared across the entire engine.

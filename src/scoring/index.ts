@@ -1,0 +1,6 @@
+export { ingestSignal } from './ingest.js'
+export { recalculateScore } from './engine.js'
+export { checkAndQualify } from './qualify.js'
+export { isSuppressed, addSuppression } from './suppress.js'
+export type { ScoreResult } from './engine.js'
+export type { IngestResult } from './ingest.js'

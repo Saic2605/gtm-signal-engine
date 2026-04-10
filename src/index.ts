@@ -9,7 +9,8 @@
 
 import 'dotenv/config'
 import { db } from './db/index.js'
-import { bus } from './bus/index.js'
+import { bus, onLeadQualified } from './bus/index.js'
+import type { QualificationEvent } from './types/index.js'
 
 async function main() {
   console.log('\n╔═══════════════════════════════════════╗')
@@ -31,8 +32,16 @@ async function main() {
     process.exit(1)
   }
 
+  // Register qualification handler (Slack + Sheets added in Phase 3/5)
+  onLeadQualified((event: QualificationEvent) => {
+    const { individual, score, urgency } = event
+    console.log(
+      `\n🔔 lead.qualified — ${individual.handle} (${individual.platform}) | score: ${score} | ${urgency}`,
+    )
+  })
+
   console.log('\n→ Engine running. Collectors will start in Phase 3.\n')
-  console.log('  Event bus ready:', bus.listenerCount('lead.qualified'), 'handlers registered')
+  console.log('  Event bus ready:', bus.listenerCount('lead.qualified'), 'handler(s) registered')
 
   // Keep the process alive
   process.on('SIGINT', async () => {
