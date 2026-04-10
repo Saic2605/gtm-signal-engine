@@ -108,8 +108,8 @@ The sequences should sound human, specific to this product, and lead with the pr
 
   const message = await anthropic.messages.create({
     model: 'claude-opus-4-6',
-    max_tokens: 8000,
-    thinking: { type: 'adaptive' },
+    max_tokens: 16000,
+    thinking: { type: 'enabled', budget_tokens: 8000 },
     system: CONFIG_SYSTEM_PROMPT,
     messages: [{ role: 'user', content: userPrompt }],
   })
@@ -152,34 +152,51 @@ async function main() {
 
   checkEnv()
 
-  const answers = await prompts([
-    {
-      type: 'text',
-      name: 'url',
-      message: 'Client website URL:',
-      validate: (v: string) =>
-        v.startsWith('http') ? true : 'Enter a full URL including https://',
-    },
-    {
-      type: 'select',
-      name: 'targetType',
-      message: 'Target type:',
-      choices: [
-        {
-          title: 'Individual — EdTech, training, communities, creator tools',
-          value: 'individual',
-        },
-        {
-          title: 'Company — B2B SaaS, tools, agencies selling to businesses',
-          value: 'company',
-        },
-      ],
-    },
-  ])
+  // Support non-interactive mode via CLI args: --url <url> --type individual|company
+  const args = process.argv.slice(2)
+  const urlArgIdx = args.indexOf('--url')
+  const typeArgIdx = args.indexOf('--type')
 
-  if (!answers.url || !answers.targetType) {
-    console.log('\nSetup cancelled.\n')
-    process.exit(0)
+  let answers: { url: string; targetType: 'individual' | 'company' }
+
+  if (urlArgIdx !== -1 && typeArgIdx !== -1) {
+    answers = {
+      url: args[urlArgIdx + 1],
+      targetType: args[typeArgIdx + 1] as 'individual' | 'company',
+    }
+    console.log(`→ URL: ${answers.url}`)
+    console.log(`→ Target type: ${answers.targetType}\n`)
+  } else {
+    const prompted = await prompts([
+      {
+        type: 'text',
+        name: 'url',
+        message: 'Client website URL:',
+        validate: (v: string) =>
+          v.startsWith('http') ? true : 'Enter a full URL including https://',
+      },
+      {
+        type: 'select',
+        name: 'targetType',
+        message: 'Target type:',
+        choices: [
+          {
+            title: 'Individual — EdTech, training, communities, creator tools',
+            value: 'individual',
+          },
+          {
+            title: 'Company — B2B SaaS, tools, agencies selling to businesses',
+            value: 'company',
+          },
+        ],
+      },
+    ])
+
+    if (!prompted.url || !prompted.targetType) {
+      console.log('\nSetup cancelled.\n')
+      process.exit(0)
+    }
+    answers = prompted
   }
 
   const websiteContent = await scrapeWebsite(answers.url)

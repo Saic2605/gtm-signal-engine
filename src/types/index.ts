@@ -1,5 +1,7 @@
 // ─── Re-export Prisma enums so the rest of the codebase imports from one place ─
 
+import type { Individual, Signal } from '@prisma/client'
+
 export { BuyerProfile, SignalCategory, SignalTaxonomy } from '@prisma/client'
 export type { Individual, Signal, Suppression } from '@prisma/client'
 
@@ -8,64 +10,58 @@ export type { Individual, Signal, Suppression } from '@prisma/client'
 export type TargetType = 'individual' | 'company'
 
 export interface ScoringConfig {
-  qualifyThreshold: number       // default 50
-  urgentThreshold: number        // default 40
-  urgentSignalCount: number      // default 3
-  urgentWindowDays: number       // default 7
-  scoringWindowDays: number      // default 30
-  requalifyAfterDays: number     // default 30
+  qualifyThreshold: number        // default 50
+  urgentThreshold: number         // default 40
+  urgentSignalCount: number       // default 3
+  urgentWindowDays: number        // default 7
+  scoringWindowDays: number       // default 30
+  requalifyAfterDays: number      // default 30
   deduplicationWindowDays: number // default 7
 }
 
-export interface RedditSignalConfig {
-  subreddits: string[]
-  careerSeekerTerms?: string[]
-  agencyBuilderTerms?: string[]
-  brandTerms: string[]
-  competitorTerms: string[]
+export interface BuyerProfileConfig {
+  role: string
+  title: string[]
+  seniority: string[]
+  triggers: string[]
 }
 
-export interface HNSignalConfig {
-  careerSeekerTerms?: string[]
-  agencyBuilderTerms?: string[]
-  brandTerms: string[]
-  competitorTerms: string[]
-}
-
-export interface ClayCommunityConfig {
-  triggerPhrases: string[]
-}
-
-export interface TwitterConfig {
-  handles: string[]      // e.g. ["nathanlippi"]
-  brandTerms: string[]
-}
-
-export interface SignalsConfig {
-  reddit?: RedditSignalConfig
-  hn?: HNSignalConfig
-  clayCommunity?: ClayCommunityConfig
-  twitter?: TwitterConfig
-}
-
-export interface KeyPerson {
+export interface SignalConfig {
   name: string
+  description: string
+  searchTerms: string[]
+  platforms: string[]   // "linkedin" | "twitter" | "reddit" | "hn" | "clay_community" | "ph"
+  weight: number
+}
+
+export interface KeyPersonConfig {
+  name: string
+  role?: string
+  platform?: string
+  profileUrl?: string
   linkedinSlug?: string
   twitterHandle?: string
+  isPrimary?: boolean
 }
 
-export interface Competitor {
+export interface CompetitorConfig {
   name: string
-  terms: string[]
+  url?: string
+  terms?: string[]
+  differentiator?: string
 }
 
-export interface OutreachSequences {
-  careerSeekerCommunityIntent?: string
-  careerSeekerCompetitorSignal?: string
-  agencyBuilderCommunityIntent?: string
-  agencyBuilderCompetitorSignal?: string
-  authorityEngagement?: string
-  brandSignal?: string
+export type OutreachChannel = 'linkedin' | 'email' | 'twitter'
+
+export interface OutreachStep {
+  channel: OutreachChannel
+  delayDays: number
+  template: string
+}
+
+export interface OutreachSequenceConfig {
+  name: string
+  steps: OutreachStep[]
 }
 
 export interface ClientConfig {
@@ -73,16 +69,20 @@ export interface ClientConfig {
     name: string
     website: string
     targetType: TargetType
-    slackAlertsWebhook: string
-    slackReviewWebhook: string
+    industry?: string
+    description?: string
+    valuePropositions?: string[]
+    // Loaded from .env at runtime — optional here so config stays credential-free
+    slackAlertsWebhook?: string
+    slackReviewWebhook?: string
   }
-  buyerProfiles: import('@prisma/client').BuyerProfile[]
+  buyerProfiles: BuyerProfileConfig[]
   scoring: ScoringConfig
-  signals: SignalsConfig
-  keyPeople: KeyPerson[]
-  suppressionKeywords: string[]  // alumni self-identification phrases
-  competitors: Competitor[]
-  outreachSequences: OutreachSequences
+  signals: SignalConfig[]
+  keyPeople: KeyPersonConfig[]
+  suppressionKeywords: string[]
+  competitors: CompetitorConfig[]
+  outreachSequences: OutreachSequenceConfig[]
 }
 
 // ─── Engine Events ────────────────────────────────────────────────────────────
@@ -93,8 +93,8 @@ export interface QualificationEvent {
   individual: Individual & { signals: Signal[] }
   score: number
   urgency: UrgencyLevel
-  windowSignals: Signal[]       // signals within the scoring window
-  urgentSignals: Signal[]       // signals within the urgent window
+  windowSignals: Signal[]   // signals within the scoring window
+  urgentSignals: Signal[]   // signals within the urgent window
   triggeredAt: Date
 }
 
