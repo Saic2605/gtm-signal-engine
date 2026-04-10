@@ -1,81 +1,123 @@
 # GTM Signal Engine
 
-A configurable, client-deployable GTM signal intelligence engine. Monitors public data sources for buyer intent signals, scores individuals against a client-defined profile, and fires Slack alerts when someone qualifies — all from a single config file generated from your website.
+A configurable, client-deployable GTM signal intelligence engine. Monitors public data sources for buyer intent signals, scores individuals against a client-defined profile, and fires Slack alerts + Google Sheets rows when someone qualifies — all from a single config file generated from your website.
+
+---
 
 ## How It Works
 
 ```
-npm run setup → scrapes your website → generates client.config.ts → you review → npm run dev
+npm run setup  →  scrapes your website  →  generates client.config.ts  →  review  →  npm run dev
 ```
 
-Signals flow in from Reddit, Hacker News, Clay Community, LinkedIn, Twitter, and Product Hunt. Every signal is scored. When someone crosses the threshold, your team gets a Slack alert with context, buyer profile, and source links — before they've ever heard of you.
+Reddit and Hacker News are swept on a schedule. Every post is scored. When someone crosses the threshold, your team gets a Slack alert with buyer profile, score, and source links — and a row lands in Google Sheets ready to import into Clay for enrichment and outreach.
 
 ---
 
 ## Quick Start
 
 ```bash
-git clone https://github.com/your-org/gtm-signal-engine
+git clone https://github.com/Saic2605/gtm-signal-engine
 cd gtm-signal-engine
 npm install
 
+cp .env.example .env
+# Fill in your keys (see Required API Keys below)
+
 npm run setup
 # → Enter your website URL
-# → Firecrawl scrapes it, Claude API generates your config
+# → Firecrawl scrapes it, Claude API generates client.config.ts
 # → Review client.config.ts
 
 npm run dev
+# → Engine starts, Reddit sweep runs immediately
 ```
 
 ---
 
-## Signal Sources (V1 — Public Only)
+## Build Status
 
-| Source | What's monitored | Cost |
+| Phase | What | Status |
 |---|---|---|
-| Reddit | Career intent, agency-building, brand mentions, competitor comparisons | $0 |
-| Hacker News | Ask HN career questions, GTM tool discussions | $0 |
-| Clay Community | Introduce Yourself posts, learning intent, agency discussions | ~$5/mo (Firecrawl) |
-| LinkedIn | Post likers/commenters on key people in your space | ~$5–10/mo (Serper) |
-| Twitter/X | Mentions, replies, quote tweets | Serper scrape |
-| Product Hunt | Upvoters/commenters on your PH page | $0 |
-| RSS | Newsletter/blog mentions | $0 |
+| 1 | Scaffold, Prisma schema, types, event bus, `npm run setup` script | ✅ Done |
+| 2 | Scoring engine, deduplication, urgency classifier, re-qualification guard | ✅ Done |
+| 3 | Reddit collector (hourly) + HN collector (daily) + Slack Block Kit alerts | ✅ Done |
+| 5 | Google Sheets export — auto-creates Leads tab, appends row on qualification | ✅ Done |
+| 3b | Clay Community, LinkedIn, Twitter/X scrapers | Planned |
+| 6 | Vitest tests, Product Hunt, RSS, daily digest cron | Planned |
 
-**Total V1 cost: ~$10–20/month.**
+---
+
+## Signal Sources
+
+| Source | Frequency | Credentials | Cost |
+|---|---|---|---|
+| Reddit | Hourly | None (public JSON API) | $0 |
+| Hacker News | Daily (9am) | None (HN Algolia API) | $0 |
+| Clay Community | — | Firecrawl | ~$5/mo |
+| LinkedIn / Twitter | — | Serper API | ~$10/mo |
 
 ---
 
 ## Architecture
 
 ```
-COLLECTORS (cron) → INDIVIDUAL STORE → SCORING ENGINE → QUALIFICATION EVENT → SLACK ALERT
-                                                                              → GOOGLE SHEETS
+COLLECTORS (cron)
+  Reddit (hourly) ──┐
+  HN (daily 9am) ───┤
+                    ↓
+             ingestSignal()
+                    │
+        ┌───────────┼───────────┐
+        ↓           ↓           ↓
+    Suppress     Dedup       Store Signal
+    (handle +    (7-day      (Supabase)
+     keyword)    window)
+                    │
+                    ↓
+             Score (rolling 30-day)
+                    │
+                    ↓
+             Qualify?
+           ┌────────┴────────┐
+          YES               NO
+           │
+    lead.qualified event
+           │
+    ┌──────┴──────┐
+    ↓             ↓
+ #gtm-alerts   Google Sheets
+ Slack alert   Leads tab row
+ (Block Kit)
+           │
+           ↓
+    Import to Clay
+    → Enrich (name, email, company)
+    → Run outreach sequence
 ```
 
-### Signal Scoring
+### Scoring Rules
 
-Every signal carries a weight (8–35 points). Score is a rolling 30-day window sum per individual. No decay function needed — signals naturally fall out of the window.
-
-- **Standard threshold:** score ≥ 50
-- **URGENT:** 3+ signals in 7 days AND score ≥ 40
-- **Deduplication:** same signal type + source + individual within 7 days = ignored
+- **Standard qualification:** score ≥ 50
+- **URGENT path:** 3+ signals in 7 days AND score ≥ 40
+- **Deduplication:** same signal type + source + individual within 7 days = dropped
 - **Re-qualification guard:** re-fires only after 30 days since last qualification
+- **Scoring window:** rolling 30 days — no cleanup needed, signals decay naturally
 
 ### Noise Filtering
 
-Two gates run before any signal is stored:
+Two suppression gates run before any signal is stored:
 
-1. **Handle suppression** — `Suppression` table holds known alumni/student handles (Reddit, LinkedIn, Twitter). Signal dropped on match.
-2. **Keyword suppression** — Post text scanned for alumni self-identification phrases. Signal dropped.
+1. **Handle suppression** — known alumni/student handles in the `Suppression` table are dropped
+2. **Keyword suppression** — post text scanned for self-identification phrases (e.g. "Clay Bootcamp alumni")
 
 ### Buyer Profiles
 
-Every individual is classified as one of:
-- `CAREER_SEEKER` — wants to get hired as a GTM Engineer
-- `AGENCY_BUILDER` — wants to build/grow a GTM agency
-- `UNKNOWN` — not yet classified
-
-Classification is inferred from signal content. Drives outreach sequence selection.
+| Profile | Who | Triggers |
+|---|---|---|
+| `CAREER_SEEKER` | SDRs, BDRs wanting to break into GTM Engineering | "how to become a GTM engineer", "SDR burnout", "learn Clay" |
+| `AGENCY_BUILDER` | Freelancers/consultants starting a GTM agency | "starting a Clay agency", "Claygency", "first Clay client" |
+| `UNKNOWN` | Not yet classified | Enriched later via Clay |
 
 ---
 
@@ -84,166 +126,123 @@ Classification is inferred from signal content. Drives outreach sequence selecti
 One file drives everything. Generated by `npm run setup`, reviewed by a human, then committed.
 
 ```typescript
-export const config = {
+export const config: ClientConfig = {
   client: {
     name: 'Clay Bootcamp',
     website: 'https://www.claybootcamp.com',
     targetType: 'individual',   // 'individual' | 'company'
   },
-  buyerProfiles: ['CAREER_SEEKER', 'AGENCY_BUILDER'],
+  buyerProfiles: [/* 5 profiles */],
   scoring: {
     qualifyThreshold: 50,
     urgentThreshold: 40,
     urgentSignalCount: 3,
     urgentWindowDays: 7,
     scoringWindowDays: 30,
+    requalifyAfterDays: 30,
+    deduplicationWindowDays: 7,
   },
-  signals: {
-    reddit: {
-      subreddits: ['sales', 'entrepreneur', 'clay', 'gtm'],
-      careerSeekerTerms: ['gtm engineer', 'break into gtm', 'learn clay'],
-      agencyBuilderTerms: ['gtm agency', 'clay agency', 'outbound agency mrr'],
-      brandTerms: ['clay bootcamp', 'claybootcamp'],
-      competitorTerms: ['gtm engineer school', 'maven gtm', 'stackoptimise'],
-    },
-    // ... linkedin, twitter, clayComminity, productHunt, rss
-  },
-  keyPeople: [
-    { name: 'Nathan Lippi', linkedinSlug: 'nathanlippi', twitterHandle: 'nathanlippi' },
-  ],
-  slack: {
-    alertsWebhook: process.env.SLACK_ALERTS_WEBHOOK,
-    reviewWebhook: process.env.SLACK_REVIEW_WEBHOOK,
-    digestCron: '0 8 * * *',
-  },
-};
+  signals: [/* 10 signals with searchTerms, weights, platforms */],
+  keyPeople: [/* Nathan Lippi, Patricia Chu, etc. */],
+  suppressionKeywords: [/* 20 alumni self-identification phrases */],
+  outreachSequences: [/* 4 sequences mapped to buyer profiles */],
+}
 ```
 
 ---
 
-## Dashboard (Google Sheets)
+## Slack Alerts (`#gtm-alerts`)
 
-No frontend, no maintenance. The engine writes directly to a shared Google Sheet via the Sheets API.
-
-**Tab 1 — Qualified Leads**
-
-| Name/Handle | Platform | Buyer Profile | Score | Urgency | Top Signal | Signal Count | Source URLs | LinkedIn | Detected At |
-|---|---|---|---|---|---|---|---|---|---|
-| u/outbound_nerd | Reddit | AGENCY_BUILDER | 68 | URGENT | Clay Community intro: "building a GTM agency" | 3 | reddit.com/... | 🔍 Find: outbound_nerd | 2026-04-10 09:14 |
-
-**Tab 2 — Accumulating (Pre-Threshold)**
-
-| Handle | Platform | Buyer Profile | Score | Signal Count | Days Accumulating | Top Signal | Source URL |
-|---|---|---|---|---|---|---|---|
-| u/growth_curious | Reddit | CAREER_SEEKER | 32 | 2 | Reddit: "how to become a gtm engineer" | reddit.com/... | 2026-04-10 |
-
----
-
-## Slack Alerts
-
-### `#gtm-alerts` — Real-time qualification
+Every qualification fires a Block Kit message:
 
 ```
-🔥 URGENT — Score: 68 | AGENCY_BUILDER
+🔵 STANDARD lead qualified — LoveScoutCEO
 
-👤 u/outbound_nerd (Reddit)
-   "I want to start a Clay automation agency — anyone done this?"
-   r/sales · 2 hours ago
+Handle      LoveScoutCEO (reddit.com/user/LoveScoutCEO)
+Platform    reddit
+Score       75
+Signals     3
 
-Signals:
-  +35  Clay Community intro: "building a GTM agency" (community.clay.com)
-  +22  Reddit: "start a clay agency" (r/sales)
-  +22  Reddit: "gtm agency mrr" (r/entrepreneur) [3 days ago]
+Signals detected
+• REDDIT_POST (reddit) — weight 40
+• REDDIT_POST (reddit) — weight 35
 
-[View on Reddit]  [Find on LinkedIn]
+Triggered at 2026-04-10T12:34:56Z · GTM Signal Engine
 ```
 
-### `#signal-review` — Daily 8am digest
-
-Top 10 individuals accumulating signals below threshold. For reviewing warm leads before they qualify.
+URGENT leads use a red header. STANDARD leads use blue.
 
 ---
 
-## Outreach Sequences
+## Google Sheets Dashboard
 
-Manually sent by admissions team from the Slack alert. Platform wiring in Phase 6.
+The engine auto-creates a **Leads** tab on first run with these columns:
 
-**CAREER_SEEKER + COMMUNITY_INTENT**
-> "{First name} — saw your post on [Reddit/HN/Clay Community] about [what they said].
->
-> Most people in that position spend 6–12 months piecing it together from YouTube and courses that weren't built for Clay. Our alumni skip that — they're usually placing into roles within 90 days.
->
-> Not a pitch. If it's useful, happy to send you what the actual path looks like."
+| Date Qualified | Handle | Platform | Profile URL | Buyer Profile | Score | Urgency | Signal Count | Top Signals | Source URLs | Status | Notes |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 2026-04-10... | LoveScoutCEO | reddit | reddit.com/user/... | AGENCY_BUILDER | 75 | STANDARD | 3 | REDDIT_POST | urls... | New — Ready for Clay | |
 
-**AGENCY_BUILDER + COMMUNITY_INTENT**
-> "{First name} — I just read your post about [specific detail].
->
-> The alumni who go down this path move fast when they have the right foundation — The Kiln, Sculpted, and others doing serious MRR all came through Clay Bootcamp. The difference is usually knowing which workflows actually sell.
->
-> If you're figuring out the early positioning and service stack, worth a conversation. What stage are you at?"
-
-**BRAND_SIGNAL**
-> "{First name} — you mentioned Clay Bootcamp on [platform].
->
-> I won't pretend I didn't see it. Whatever you're trying to figure out — fit, cost, outcomes, something else — I'd rather give you a real answer than a sales deck.
->
-> What's the actual question?"
+Import this tab into Clay to enrich handles into real names, emails, and companies, then run the outreach sequences from `client.config.ts`.
 
 ---
 
-## Build Phases
+## Project Structure
 
-| Phase | What | Status |
-|---|---|---|
-| 1 | `npm run setup` script + Prisma schema + types + EventEmitter2 bus | Not started |
-| 2 | Scoring engine, deduplication, urgency classifier, re-qualification guard | Not started |
-| 3 | Reddit collector + HN collector + Slack alerts | Not started |
-| 3b | Clay Community scraper + LinkedIn + Twitter/X scrapers | Not started |
-| 4 | Enrichment waterfall + buyer profile classifier + outreach templates | Not started |
-| 5 | Google Sheets dashboard + daily digest cron | Not started |
-| 6 | Vitest tests + Product Hunt + RSS + outreach platform wiring | Not started |
-
----
-
-## Stack
-
-- **Runtime:** Node.js 20 LTS + TypeScript
-- **Database:** Supabase (PostgreSQL via Prisma ORM)
-- **Scheduler:** node-cron
-- **Event bus:** EventEmitter2
-- **API:** Fastify
-- **Setup scraping:** Firecrawl
-- **Config generation:** Anthropic Claude API
-- **Alerts:** Slack Webhook + Block Kit
-- **Dashboard:** Google Sheets API
-- **Tests:** Vitest
+```
+gtm-signal-engine/
+├── client.config.ts          # Generated per-client config (reviewed + committed)
+├── prisma/
+│   └── schema.prisma         # Individual, Signal, Suppression models
+├── src/
+│   ├── index.ts              # Engine entry — collectors + handlers wired
+│   ├── types/index.ts        # All TypeScript types
+│   ├── bus/index.ts          # EventEmitter2 — lead.qualified event
+│   ├── db/index.ts           # Prisma client singleton
+│   ├── setup/index.ts        # npm run setup — Firecrawl + Claude config generator
+│   ├── scoring/
+│   │   ├── ingest.ts         # Main pipeline — suppress → dedup → store → score → qualify
+│   │   ├── engine.ts         # Rolling 30-day score + URGENT/STANDARD classifier
+│   │   ├── qualify.ts        # Re-qualification guard + event emission
+│   │   └── suppress.ts       # Two-gate suppression
+│   ├── collectors/
+│   │   ├── reddit.ts         # Reddit public JSON API — hourly cron
+│   │   └── hn.ts             # HN Algolia API — daily 9am cron
+│   ├── alerts/
+│   │   └── slack.ts          # Block Kit alert → #gtm-alerts
+│   └── exports/
+│       └── sheets.ts         # Google Sheets — auto-creates tabs, appends on qualify
+├── .env                      # API keys (never commit)
+└── supabase-init.sql         # One-time DB bootstrap
+```
 
 ---
 
 ## Required API Keys
 
-| Key | Where | Tier |
+| Key | Where to get | Required for |
 |---|---|---|
-| `SLACK_ALERTS_WEBHOOK` | Slack App | Free |
-| `FIRECRAWL_API_KEY` | firecrawl.dev | Free tier |
-| `ANTHROPIC_API_KEY` | console.anthropic.com | Pay-per-use |
-| `SUPABASE_URL` + `SUPABASE_KEY` | supabase.com | Free tier |
-| `REDDIT_CLIENT_ID` + `REDDIT_SECRET` | reddit.com/prefs/apps | Free |
-| `SERPER_API_KEY` | serper.dev | 2,500 free/mo |
-| `GOOGLE_SHEETS_ID` + service account JSON | Google Cloud Console | Free |
+| `ANTHROPIC_API_KEY` | console.anthropic.com | `npm run setup` config generation |
+| `FIRECRAWL_API_KEY` | firecrawl.dev | `npm run setup` website scraping |
+| `DATABASE_URL` | supabase.com → Settings → Database | All DB operations |
+| `SLACK_ALERTS_WEBHOOK` | Slack App → Incoming Webhooks | Lead alerts |
+| `SLACK_DIGEST_WEBHOOK` | Slack App → Incoming Webhooks | Daily digest (planned) |
+| `GOOGLE_SHEETS_ID` | Google Sheets URL | Lead export |
+| `GOOGLE_SERVICE_ACCOUNT_JSON` | Google Cloud Console → IAM → Service Accounts | Google Sheets auth |
+
+No Reddit OAuth required — the collector uses Reddit's public JSON API.
 
 ---
 
 ## Per-Client Deployment
 
-This is a template. Each client is a separate instance:
+This repo is a template. Each client is a separate instance:
 
 ```bash
-git clone https://github.com/your-org/gtm-signal-engine my-client-name
+git clone https://github.com/Saic2605/gtm-signal-engine my-client-name
 cd my-client-name
 npm install
 npm run setup   # generates client.config.ts for this client
-# review config, add API keys to .env
+# review config, fill in .env
 npm run dev
 ```
 
