@@ -14,6 +14,7 @@ import { bus, onLeadQualified } from './bus/index.js'
 import { sendLeadAlert } from './alerts/slack.js'
 import { runRedditCollector } from './collectors/reddit.js'
 import { runHNCollector } from './collectors/hn.js'
+import { runLinkedInCollector } from './collectors/linkedin.js'
 import { appendLeadRow } from './exports/sheets.js'
 import type { QualificationEvent } from './types/index.js'
 
@@ -64,7 +65,13 @@ async function main() {
     runHNCollector().catch(err => console.error('[HN] Collector error:', err))
   })
 
-  console.log('\n→ Engine running. Reddit (hourly) + HN (daily) collectors active.\n')
+  // LinkedIn: run once on startup, then daily at 10am
+  runLinkedInCollector().catch(err => console.error('[LinkedIn] Collector error:', err))
+  cron.schedule('0 10 * * *', () => {
+    runLinkedInCollector().catch(err => console.error('[LinkedIn] Collector error:', err))
+  })
+
+  console.log('\n→ Engine running. Reddit (hourly) + HN (9am) + LinkedIn (10am) collectors active.\n')
   console.log('  Event bus ready:', bus.listenerCount('lead.qualified'), 'handler(s) registered')
 
   // Keep the process alive
