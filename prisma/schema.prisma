@@ -1,0 +1,90 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum SignalTaxonomy {
+  INTENT
+  TRIGGER
+  AUTHORITY_ENGAGEMENT
+  TECHNOGRAPHIC
+}
+
+enum SignalCategory {
+  BRAND_SIGNAL
+  COMMUNITY_INTENT
+  COMPETITOR_SIGNAL
+  AUTHORITY_ENGAGEMENT
+  MARKET_SIGNAL
+}
+
+enum BuyerProfile {
+  CAREER_SEEKER
+  AGENCY_BUILDER
+  UNKNOWN
+}
+
+// ─── Models ──────────────────────────────────────────────────────────────────
+
+/// Handles (Reddit usernames, LinkedIn slugs, Twitter handles) of known
+/// alumni and current students. Signals from suppressed handles are dropped
+/// before scoring.
+model Suppression {
+  id       String   @id @default(cuid())
+  handle   String   @unique
+  platform String?  // "reddit" | "linkedin" | "twitter" | "email"
+  reason   String?  // "alumni" | "current_student" | "manual"
+  addedAt  DateTime @default(now())
+}
+
+/// The primary entity. A person identified by their public handle on at least
+/// one platform. Company fields are optional — populated during enrichment.
+model Individual {
+  id              String       @id @default(cuid())
+  handle          String?      // Reddit username, Twitter handle, LinkedIn slug
+  platform        String?      // "reddit" | "linkedin" | "twitter" | "clay_community" | "hn"
+  name            String?
+  profileUrl      String?
+  buyerProfile    BuyerProfile @default(UNKNOWN)
+  score           Int          @default(0)
+  qualified       Boolean      @default(false)
+  lastQualifiedAt DateTime?
+  // Enriched later — not required to store a signal
+  companyName     String?
+  companyDomain   String?
+  title           String?
+  email           String?
+  signals         Signal[]
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@unique([handle, platform])
+  @@index([score])
+  @@index([qualified])
+}
+
+/// A single detected intent event tied to an Individual.
+model Signal {
+  id           String         @id @default(cuid())
+  individualId String
+  type         String         // "REDDIT_POST" | "REDDIT_COMMENT" | "HN_POST" | "COMMUNITY_POST" | "LINKEDIN_LIKE" | "TWITTER_MENTION" | "PH_UPVOTE" | "RSS_MENTION"
+  category     SignalCategory
+  taxonomy     SignalTaxonomy
+  weight       Int
+  source       String         // "reddit" | "hn" | "clay_community" | "linkedin" | "twitter" | "ph" | "rss"
+  sourceUrl    String?
+  rawData      Json           // full post/comment/profile payload from the source
+  buyerProfile BuyerProfile   // which profile this signal suggests
+  detectedAt   DateTime       @default(now())
+  individual   Individual     @relation(fields: [individualId], references: [id])
+
+  @@unique([individualId, type, source, sourceUrl]) // deduplication key
+  @@index([individualId, detectedAt])
+  @@index([detectedAt])
+}
