@@ -45,10 +45,10 @@ async function main() {
       `\n🔔 lead.qualified — ${individual.handle} (${individual.platform}) | score: ${score} | ${urgency}`,
     )
     sendLeadAlert(event).catch(err =>
-      console.error('Slack alert error:', err),
+      console.error('[Slack] Alert error:', (err as Error).message ?? err),
     )
     appendLeadRow(event).catch(err =>
-      console.error('Sheets export error:', err),
+      console.error('[Sheets] Export error:', (err as Error).message ?? err),
     )
   })
 

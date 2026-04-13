@@ -42,9 +42,12 @@ function getSheets() {
     private_key: string
   }
 
+  // .env files double-escape \n in the private key — unescape it so JWT auth works
+  const privateKey = credentials.private_key.replace(/\\n/g, '\n')
+
   const auth = new google.auth.JWT({
     email: credentials.client_email,
-    key: credentials.private_key,
+    key: privateKey,
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
   })
 
